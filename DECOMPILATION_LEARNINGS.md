@@ -54101,16 +54101,22 @@ pinned hard reg for the derived address; a `USE_REG(p)` after the derived uses
 blocks it. This is distinct from the priority-tie lever (bump refs / shorten
 live range) documented for the unpinned case — it works *with* the pin.
 
-(The residual on this function is a prologue load-schedule/coloring knot: the
-retail build loads the `extra` pointer into v1 and materialises `Gp_State1C`
-into v0 in parallel, filling the `%lo`->`lh` load delay with the `spawnArg1`
-load, so `field_4` lands in v0 and `var_v0` colours v0 with no stall.
-GCC hoists the whole `Gp_State1C` load to the top instead, forcing `field_4`
-into v1, `var_v0` into a0, and a filler `nop` -> five branch offsets shift
-+4. A dozen barrier / TOUCH_REG / statement-order variants and a permuter run
-all plateaued at 97.2% (390 diffs, branch=5); left difficult, seeds in
-tools/giveups/. Best seed base_16.c: `USE_REG(work)` + `SOFT_BARRIER()` after
-the coord load.)
+**MATCHED (100%)** after the `USE_REG(work)` fix by closing the prologue knot:
+the retail build keeps `field_4`, then `var_v0`, in `v0` by letting the delay-
+slot `slti v0,v0,4` be `field_4`'s *last* use (`field_4 -> var_v0` RMW in one
+reg). Computing `var_v0 = Gp_State1C->field_4 < 4` **before** the
+`if (field_4 == 0)` makes `field_4` outlive the `slti` (the `== 0` bnez reads it
+after), so the two can't coalesce and `field_4` spills to `a0`. Two changes fix
+it: (1) pin `register s32 var_v0 asm("v0")`; (2) move the `< 4` compare into the
+`else` branch of the `field_4 == 0` test - `if (...==0){switch}else{var_v0 =
+field_4 < 4;}` - so the `slti` is `field_4`'s last use and coalesces into v0.
+Then the natural init order `work; coord; target;` (target computed last, no
+barrier) gives GCC the retail load schedule (`extra` before `Gp_State1C`,
+`spawnArg1` after) and the whole prologue matches. Full unscoped build verified.
+The general lever: to get GCC 2.8.1 to fuse a value and a derived boolean into
+one register (`x`, then `x < k`), make the compare the value's syntactically
+last use, typically by sinking it into the not-taken branch of the test that
+would otherwise read `x` afterwards.
 
 ## Handwritten-GTE POLY_FT4 billboard drawer `RoomsShared8017e890Draw` (25-copy shared body)
 
