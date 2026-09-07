@@ -54069,3 +54069,77 @@ Rule: when the prologue's saved-reg copy/order is the only diff and a parameter
 is aliased to a local, delete the alias and use the parameter directly. The
 extra copy gives the scheduler a second placement it can defer; the direct use
 does not.
+## `USE_REG(x)` keeps a pinned-but-dead pseudo from being reused for a derived address
+
+Handwritten-GTE local-light transform `func_shelter_b1_control_room_access_tunnel_801807C4`
+floored at 95.5% with a single `register RoomEffWork* work asm("s0")` pin. The
+body computes `sv = (SVECTOR*)&work->field_18` and feeds `sv` to the GTE ldv0/
+stsv sequence. After that `addiu`, `work` (s0) is dead along case 0s
+
+## `USE_REG(x)` keeps a pinned-but-dead pseudo from being reused for a derived address
+
+Handwritten-GTE local-light transform `func_shelter_b1_control_room_access_tunnel_801807C4`
+floored at 95.5% with a single `register RoomEffWork* work asm("s0")` pin. The
+body computes `sv = (SVECTOR*)&work->field_18` and feeds `sv` to the GTE ldv0/
+stsv sequence. After that `addiu`, `work` (s0) is dead along case 0's path
+(case 0 returns before the shared `Gp_ReleaseState1CMem(work, task)` at the
+end), so GCC's **local allocator reuses the pinned s0 for the `sv` address**:
+`addiu s0,s0,0x18` where the target keeps work in s0 and puts sv in a temp,
+`addiu v0,s0,0x18`. That one reuse rippled through ~9 GTE store/load insns
+(regs=21). The unpinned build loses the s0/coord priority tie instead
+(coord wins s0, regs=39), so neither plain form matches.
+
+Fix: keep the pinned pseudo live *past* the derived-address uses with a
+no-emit `USE_REG(work)` placed after the last `sv` use (here right before
+`task->state = 1;`). It reserves nothing and emits nothing, but it extends
+`work`'s live range across the GTE block so the local allocator can no longer
+treat s0 as free there — `sv` is forced into a temp (`addiu v0,s0,0x18`),
+matching the target and dropping regs 21 -> 9 (95.5% -> 96.6%). The general
+rule: when a value derived from a pinned pointer (`&p->field`) is the pointer's
+apparent last use on a returning path, GCC 2.8.1's local-alloc will reuse the
+pinned hard reg for the derived address; a `USE_REG(p)` after the derived uses
+blocks it. This is distinct from the priority-tie lever (bump refs / shorten
+live range) documented for the unpinned case — it works *with* the pin.
+
+(The residual on this function is a prologue load-schedule/coloring knot: the
+retail build loads the `extra` pointer into v1 and materialises `Gp_State1C`
+into v0 in parallel, filling the `%lo`->`lh` load delay with the `spawnArg1`
+load, so `field_4` lands in v0 and `var_v0` colours v0 with no stall.
+GCC hoists the whole `Gp_State1C` load to the top instead, forcing `field_4`
+into v1, `var_v0` into a0, and a filler `nop` -> five branch offsets shift
++4. A dozen barrier / TOUCH_REG / statement-order variants and a permuter run
+all plateaued at 97.2% (390 diffs, branch=5); left difficult, seeds in
+tools/giveups/. Best seed base_16.c: `USE_REG(work)` + `SOFT_BARRIER()` after
+the coord load.)
+
+## Handwritten-GTE POLY_FT4 billboard drawer `RoomsShared8017e890Draw` (25-copy shared body)
+
+`func_shelter_b1_control_room_access_tunnel_801815D0` (= `RoomsShared8017e890Draw`,
+331 insns, 25 room overlays carry it) is fully resolved semantically at 93.2%
+(seed tools/giveups/.../base_3.c). Structure, for the promotion session:
+- Signature `void f(GsCOORDINATE2* coord, s16 arg1)`.
+- Fills a static draw-env at `D_80114FF8`: `.count=2` at 0x0, then a
+  `GsCOORDINATE2` at 0x4 (`co.flg=0`, `co.coord.t[0..2] = coord->coord.t[0..2]`)
+  plus trailing fields `f50=0x800+((rnd>>16)&0x700)` (rnd = the LCG
+  `Gp_LcgState*5+0x71357911`, unsigned `>>16`), `f52=f50>>1`, `f54=f50>>2`,
+  `f58=0x300`, `f5c=0x3000`. Struct `DrawEnvRoot{ s32 count; DrawEnv env; }`,
+  `DrawEnv{ GsCOORDINATE2 co; s16 f50,f52,f54; u8 pad[2]; s32 f58,f5c; }`.
+- Allocates a 0x18 `RoomDraw14Scratch` off `G_SCRATCH_HEAD`, vec from
+  `coord->workm.t[0..2]` (s16), SetTrans/SetRot(GsWSMATRIX), ldv0, rtps,
+  stsxy -> block->sx/sy, stflg -> block->flag.
+- otz is NOT `gte_stszotz`; it is `mfc2 $19` (SZ3) `>> 2`:
+  `#define gte_read_sz3(r) __asm__ volatile("mfc2 %0, $19" : "=r"(r))`.
+- If `block->flag >= 0`, builds **two POLY_FT4 billboards** (each = one
+  `Room_Draw14` block, template src/rooms/lib/room_draw14.c). Block 1: color/
+  clut chosen by `D_80070F70 & 1` (clut 0x428B/0x428C, code 0x2E/0x2F), depth
+  `(s16)arg1 * 0x37 / block->otz`. Block 2: clut
+  `((Display_State.field_8&1)*0x10+0x120)>>4 | 0x4300` (unsigned), depth
+  `s0 * 0x37 / block->otz` where `s0 = (s16)arg1 * 3 / 2`. Corners
+  `(sx±d, sy±d)`, OT-link via `addPrim((otz<<field_128>>2 & 0xFFC)+CurrentOt)`.
+- Tail: `if (Gp_TraceGroundCoord(coord, &sp10) == 1) Room_Draw06(&sp10, s0);`
+  then `G_SCRATCH_HEAD += 0x18`.
+Residual (93.2%) is pure preamble register coloring (the 0x1F8003FC scratch
+pointer wants `t0` not `v1`; a `move t7,v0`; the `addiu v0,a0,-0x10` otz-address
+form) plus const-store scheduling. Two permuter runs (14000+ iters) plateaued
+at ~2075 diffs; needs a room_draw07-style pin choreography to close. No
+semantic/symbol/immediate diffs remain.
