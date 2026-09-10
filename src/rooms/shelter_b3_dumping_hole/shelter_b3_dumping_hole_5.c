@@ -6,6 +6,7 @@
 
 extern void func_shelter_b3_dumping_hole_8017FD9C(s32 arg0, s32 arg1);
 extern void func_shelter_b3_dumping_hole_8017FE10(void);
+extern void func_shelter_b3_dumping_hole_80181C8C(void);
 
 INCLUDE_ASM("rooms/nonmatchings/shelter_b3_dumping_hole/shelter_b3_dumping_hole_5", func_shelter_b3_dumping_hole_80181A48);
 
@@ -44,6 +45,12 @@ INCLUDE_ASM("rooms/nonmatchings/shelter_b3_dumping_hole/shelter_b3_dumping_hole_
 
 INCLUDE_ASM("rooms/nonmatchings/shelter_b3_dumping_hole/shelter_b3_dumping_hole_5", func_shelter_b3_dumping_hole_80182FD0);
 
-INCLUDE_ASM("rooms/nonmatchings/shelter_b3_dumping_hole/shelter_b3_dumping_hole_5", func_shelter_b3_dumping_hole_80183024);
+void func_shelter_b3_dumping_hole_80183024(Task* arg0)
+{
+    if ((arg0->spawnArg1 -= 1) <= 0) {
+        Task_Kill(arg0);
+    }
+    func_shelter_b3_dumping_hole_80181C8C();
+}
 
 INCLUDE_ASM("rooms/nonmatchings/shelter_b3_dumping_hole/shelter_b3_dumping_hole_5", func_shelter_b3_dumping_hole_80183060);
