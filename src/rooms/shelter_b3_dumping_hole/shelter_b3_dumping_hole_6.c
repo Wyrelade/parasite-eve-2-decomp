@@ -1,4 +1,8 @@
 #include "common.h"
+#include "main/display.h"
+
+extern TaskDesc D_shelter_b3_dumping_hole_8018B594;
+extern void     RoomsShared801830f0Sub(s32 arg0, s32 arg1, s32 arg2);
 
 typedef struct {
     u8  _pad0[0x4];
@@ -15,7 +19,11 @@ typedef struct {
     u16 field_2;
 } DumpingHoleMsg;
 
-INCLUDE_ASM("rooms/nonmatchings/shelter_b3_dumping_hole/shelter_b3_dumping_hole_6", func_shelter_b3_dumping_hole_80183144);
+void func_shelter_b3_dumping_hole_80183144(s16 arg0, s16 arg1, s16 arg2)
+{
+    RoomsShared801830f0Sub(arg0, arg1, 0xD0);
+    Display_InitModeObj(&D_shelter_b3_dumping_hole_8018B594, arg2, 0, 0);
+}
 
 INCLUDE_ASM("rooms/nonmatchings/shelter_b3_dumping_hole/shelter_b3_dumping_hole_6", func_shelter_b3_dumping_hole_80183198);
 
